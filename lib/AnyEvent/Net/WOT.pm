@@ -51,43 +51,53 @@ has storage          => ( is => 'rw', isa => 'Object',  default => sub {AnyEvent
 has cache_bad_answer => ( is => 'rw', isa => 'Bool',    default => 0);
 has default_answer   => ( is => 'rw', isa => 'HashRef', default => sub{ return {0 => [50, 50], 4 => [50, 50]}});
 
-
-has caching_time => ( is => 'rw', isa => 'Num', default => 60*60*24 );
-has bad_caching_time => ( is => 'rw', isa => 'Num', default => 60*30);
-
-
 sub lookup {
 	my ($self, $hosts, $cb_ret) = @_;
 	$hosts = [$hosts] unless ref $hosts eq 'ARRAY';
 	die "Required callback" unless $cb_ret;
 	die "Must include at most 100 target names" if @$hosts > 100;
+	my $map_host = {};
 	foreach( @$hosts ){
 		next unless m{/};
 		my $uri = URI->new($_)->canonical;
 		die "Bad url ".$_ if $uri->scheme !~ /^https?$/;
-		$_ = $uri->host;
+		$map_host->{$uri->host} = $_;
 	}
-	$self->storage->get_info_by_hosts($hosts,sub {
+	$self->storage->get_info_by_hosts(host => [ keys %$map_host ], cb => sub {
 		my $ret = shift;
 		my $url = join "/", $self->server, $self->version, $self->api_method;
 		$url .= '?hosts=';
-		foreach ( @$hosts ){
-			next if exists $ret->{$_} && $ret->{expired};
+		my $need_wot_resp = 0;
+		foreach ( keys %$map_host ){
+			next if exists $ret->{$_} && !$ret->{expired};
 			$url .= $_.'/';
+			$need_wot_resp = 1;
 		}
 		$url .= '&key='.$self->key;
 		die "the full request path must also be less than 8 KiB or it will be rejected" if length($url) > 8192; #ToDo paralel request
-		http_get $url, %{$self->param_for_http_req}, sub {
-			my ($header, $body) = @_;
-			my $result = {};
-			eval{ $result = JSON::XS->decode_json($body) } if $header->{status} == 200 && $body;
-			foreach ( @$hosts ){
-				$result->{$_} = {target => lc($_), %{$self->default_answer}, bad_answer => 1} if $self->cache_bad_answer && !exists $result->{$_};
-				$ret->{$_} = $result->{$_} if exists $result->{$_};
+		my $respons_processor = sub {
+			my $resp = shift;
+			foreach ( keys %$map_host ){
+				$resp->{$map_host->{$_}} = delete $resp->{$_};
 			}
-			$cb_ret->($ret);
-			$self->storage->set_info_by_hosts($result);
+			$cb_ret->($resp);
 		};
+		if($need_wot_resp){
+			http_get $url, %{$self->param_for_http_req}, sub {
+				my ($body, $header) = @_;
+				my $result = {};
+				eval{ $result = JSON::XS->decode_json($body) } if $header->{Status} == 200 && $body;
+				foreach ( keys %$map_host ){
+					$result->{$_} = {target => lc($_), %{$self->default_answer}, bad_answer => 1} if$self->cache_bad_answer && !exists $result->{$_};
+					$ret->{$_} = $result->{$_} if exists $result->{$_};
+				}
+				$respons_processor->($ret);
+				$self->storage->set_info_by_hosts(host => $result, cb => sub {});
+			};
+		}
+		else {
+			$respons_processor->($ret);
+		}
 	});
 	return;
 }

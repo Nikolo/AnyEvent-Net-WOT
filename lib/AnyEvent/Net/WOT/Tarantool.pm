@@ -10,6 +10,9 @@ extends 'AnyEvent::Net::WOT::Storage';
 
 has space             => (is => 'rw', isa => 'Int', required => 1);
 has all_connected     => (is => 'ro', isa => 'CodeRef', default => sub {return sub{}});
+has caching_time      => ( is => 'rw', isa => 'Num', default => 60*60*24 );
+has bad_caching_time  => ( is => 'rw', isa => 'Num', default => 60*30);
+
 
 sub BUILD {
 	my $self = shift;
@@ -33,7 +36,7 @@ sub BUILD {
 			$self->space() => {
 				name         => 'wot_cache',
 				fields       => [qw/host resp update_date bad_answer/],
-				types        => [qw/STR  SRT NUM     NUM/],
+				types        => [qw/STR  STR NUM     NUM/],
 				indexes      => {
 					0 => {
 						name => 'idx_a_uniq',
@@ -51,7 +54,7 @@ sub get_info_by_hosts {
 	my ($self, %args) = @_;
 	my $host       = $args{host}; ref $args{host} eq 'ARRAY'|| die "host arg is required and must be ARRAYREF";
 	my $cb         = $args{'cb'}; ref $args{'cb'} eq 'CODE' || die "cb arg is required and must be CODEREF";
-	$self->dbh->slave->select('wot_cache', [map {lc($_)} @$host] , {index => 1}, sub{
+	$self->dbh->slave->select('wot_cache', [map {lc($_)} @$host] , {index => 0}, sub{
 		my ($result, $error) = @_;
 		if( $error || !$result->{count} ){
 			log_error( "Tarantool error: ".$error ) if $error;
@@ -59,12 +62,14 @@ sub get_info_by_hosts {
 		}
 		else {
 			my $ret = {};
+			my $space = $self->dbh->master->{spaces}->{wot_cache};
 			foreach my $tup ( @{$result->{tuples}} ){
 				my $tmp_ret = {map {$_->{name} => $tup->[$_->{no}]||''} @{$space->{fields}}};
-				if( $tmp_ret->{bad_answer} && AnyEvent::now() - $tmp_ret->{update_date} > $self->bad_caching_time ) || (AnyEvent::now() - $tmp_ret->{update_date} > $self->caching_time){
+				if( ($tmp_ret->{bad_answer} && AnyEvent->now() - $tmp_ret->{update_date} > $self->bad_caching_time ) || (AnyEvent->now() - $tmp_ret->{update_date} > $self->caching_time)){
 					$tmp_ret->{expired} = 1;
 				}
-				$ret->{grep {lc($_) eq $tmp_ret->{host}} @$host} = {target => $tmp_ret->{host}, %{JSON::XS->decode_json($tmp_ret->{resp})}, expired => ($tmp_ret->{expired}||0)};
+				my ($tmp_host) = grep {lc($_) eq $tmp_ret->{host}} @$host;
+				$ret->{$tmp_host} = {target => $tmp_ret->{host}, %{JSON::XS::decode_json($tmp_ret->{resp})}, expired => ($tmp_ret->{expired}||0)};
 			}
 			$cb->($ret); 
 		}
@@ -72,11 +77,11 @@ sub get_info_by_hosts {
 	return;
 }
 
-sub set_info_by_host {
+sub set_info_by_hosts {
 	my ($self, %args) = @_;
 	my $host       = $args{host}; ref $args{host} eq 'HASH' || die "host arg is required and must be HASHREF";
 	my $cb         = $args{'cb'}; ref $args{'cb'} eq 'CODE' || die "cb arg is required and must be CODEREF";
-	$self->dbh->master->lua( 'add_to_wot_cache', [JSON::XS->encode_json($host)], {in => 'pp', out => 'p'}, sub {
+	$self->dbh->master->lua( 'add_to_wot_cache', [$self->space(), JSON::XS::encode_json($host)], {in => 'pp', out => 'p'}, sub {
 		my ($result, $error) = @_;
 		log_error( "Tarantool error: ",$error ) if $error;
 		$cb->($error ? 1 : 0);
