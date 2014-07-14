@@ -69,7 +69,7 @@ sub lookup {
 		$url .= '?hosts=';
 		my $need_wot_resp = 0;
 		foreach ( keys %$map_host ){
-			next if exists $ret->{$_} && !$ret->{expired};
+			next if exists $ret->{$_} && !$ret->{$_}->{expired};
 			$url .= $_.'/';
 			$need_wot_resp = 1;
 		}
