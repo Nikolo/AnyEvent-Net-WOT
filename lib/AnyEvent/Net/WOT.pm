@@ -5,7 +5,7 @@ use utf8;
 use AnyEvent::HTTP;
 use Mouse;
 use AnyEvent::Net::WOT::Storage;
-our $VERSION = '1.45';
+our $VERSION = '1.47';
 
 =head1 NAME
 
@@ -86,9 +86,9 @@ sub lookup {
 			http_get $url, %{$self->param_for_http_req}, sub {
 				my ($body, $header) = @_;
 				my $result = {};
-				eval{ $result = JSON::XS->decode_json($body) } if $header->{Status} == 200 && $body;
+				eval{ $result = JSON::XS::decode_json($body) } if $header->{Status} == 200 && $body;
 				foreach ( keys %$map_host ){
-					$result->{$_} = {target => lc($_), %{$self->default_answer}, bad_answer => 1} if$self->cache_bad_answer && !exists $result->{$_};
+					$result->{$_} = {target => lc($_), %{$self->default_answer}, bad_answer => 1} if $self->cache_bad_answer && !exists $result->{$_};
 					$ret->{$_} = $result->{$_} if exists $result->{$_};
 				}
 				$respons_processor->($ret);
