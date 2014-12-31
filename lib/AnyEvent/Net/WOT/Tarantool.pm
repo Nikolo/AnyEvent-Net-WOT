@@ -81,7 +81,7 @@ sub set_info_by_hosts {
 	my ($self, %args) = @_;
 	my $host       = $args{host}; ref $args{host} eq 'HASH' || die "host arg is required and must be HASHREF";
 	my $cb         = $args{'cb'}; ref $args{'cb'} eq 'CODE' || die "cb arg is required and must be CODEREF";
-	$self->dbh->master->lua( 'add_to_wot_cache', [$self->space(), JSON::XS::encode_json($host)], {in => 'pp', out => 'p'}, sub {
+	$self->dbh->master->lua( 'mras_cache.add_to_wot_cache', [$self->space(), JSON::XS::encode_json($host)], {in => 'pp', out => 'p'}, sub {
 		my ($result, $error) = @_;
 		log_error( "Tarantool error: ",$error ) if $error;
 		$cb->($error ? 1 : 0);
