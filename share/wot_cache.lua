@@ -1,5 +1,5 @@
 -- Version
-local VERSION               = "1.6"
+local VERSION               = "1.62"
 
 -- Modules
 wot_cache = wot_cache or {}
