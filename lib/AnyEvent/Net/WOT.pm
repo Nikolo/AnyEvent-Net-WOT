@@ -89,7 +89,7 @@ sub lookup {
 				eval{ $result = JSON::XS::decode_json($body) } if $header->{Status} == 200 && $body;
 				foreach ( keys %$map_host ){
 					$result->{$_} = {target => lc($_), %{$self->default_answer}, bad_answer => 1} if $self->cache_bad_answer && !exists $result->{$_};
-					$ret->{$_} = $result->{$_} if exists $result->{$_};
+					$ret->{$_} = {%{$result->{$_}}} if exists $result->{$_};
 				}
 				$respons_processor->($ret);
 				$self->storage->set_info_by_hosts(host => $result, cb => sub {});
