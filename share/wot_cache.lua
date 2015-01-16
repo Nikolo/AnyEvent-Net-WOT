@@ -1,5 +1,5 @@
 -- Version
-local VERSION               = "1.2"
+local VERSION               = "1.55"
 
 -- Modules
 wot_cache = wot_cache or {}
@@ -8,6 +8,7 @@ local bad_expire_time = 3600 * 24
 local expire_time = 60 * 30
 local expire_in_process = 0
 local max_del_per_iter = 1000
+local space = 3
 module('wot_cache', package.seeall)
 
 function add_to_wot_cache(space_num,json)
