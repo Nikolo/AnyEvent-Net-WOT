@@ -5,7 +5,7 @@ use utf8;
 use AnyEvent::HTTP;
 use Mouse;
 use AnyEvent::Net::WOT::Storage;
-our $VERSION = '1.6.2';
+our $VERSION = '1.7';
 
 =head1 NAME
 
