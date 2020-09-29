@@ -3,6 +3,8 @@ package AnyEvent::Net::WOT;
 use strict;
 use utf8;
 use AnyEvent::HTTP;
+
+use URI;
 use Mouse;
 use AnyEvent::Net::WOT::Storage;
 our $VERSION = '1.7';
@@ -27,8 +29,9 @@ AnyEvent::Net::WOT - AnyEvent Perl extension for the Web Of Trust API.
   $storage->dbh->connect();
 
   my $wot = AnyEvent::Net::WOT->new({
-	server => "http://api.mywot.com/0.4/public_link_json2",
-	key => "key";
+	server 	=> "https://scorecard.api.mywot.com",
+	user_id => "1",
+	key 	=> "key";
 	storage => $storage,
   });
   my $url = 'example.COM';
@@ -42,14 +45,26 @@ AnyEvent::Net::WOT implements the Web of Trust API.
 =cut
 
 has key              => ( is => 'rw', isa => 'Str',     required => 1 );
+has user_id          => ( is => 'rw', isa => 'Str',     required => 1 );
 has server           => ( is => 'rw', isa => 'Str',     required => 1 );
-has version          => ( is => 'rw', isa => 'Str',     default => '0.4' );
-has api_method       => ( is => 'rw', isa => 'Str',     default => 'public_link_json2');
+
+has version          => ( is => 'rw', isa => 'Str',     default => 'v3' );
+has api_method       => ( is => 'rw', isa => 'Str',     default => 'targets');
+
 has user_agent       => ( is => 'rw', isa => 'Str',     default => 'AnyEvent::Net::WOT client '.$VERSION );
 has http_timeout     => ( is => 'rw', isa => 'Num',     default => 1 );
 has storage          => ( is => 'rw', isa => 'Object',  default => sub {AnyEvent::Net::WOT::Storage->new()});
 has cache_bad_answer => ( is => 'rw', isa => 'Bool',    default => 0);
-has default_answer   => ( is => 'rw', isa => 'HashRef', default => sub{ return {0 => [50, 50], 4 => [50, 50]}});
+
+sub default_answer {
+	return {
+		safety => {
+			status => AnyEvent::Net::WOT::Const::STATUS_UNKNOWN(),
+			reputations => 0,
+			confidence => 0
+		},
+	};
+}
 
 sub lookup {
 	my ($self, $hosts, $cb_ret) = @_;
@@ -65,16 +80,13 @@ sub lookup {
 	}
 	$self->storage->get_info_by_hosts(host => [ keys %$map_host ], cb => sub {
 		my $ret = shift;
-		my $url = join "/", $self->server, $self->version, $self->api_method;
-		$url .= '?hosts=';
-		my $need_wot_resp = 0;
-		foreach ( keys %$map_host ){
-			next if exists $ret->{$_} && !$ret->{$_}->{expired};
-			$url .= $_.'/';
-			$need_wot_resp = 1;
+
+		my @need_wot_resp;
+		foreach my $host ( keys %$map_host ){
+			next if exists $ret->{$host} && !$ret->{$host}->{expired};
+			push @need_wot_resp, $host;
 		}
-		$url .= '&key='.$self->key;
-		die "the full request path must also be less than 8 KiB or it will be rejected" if length($url) > 8192; #ToDo paralel request
+
 		my $respons_processor = sub {
 			my $resp = shift;
 			foreach ( keys %$map_host ){
@@ -82,17 +94,26 @@ sub lookup {
 			}
 			$cb_ret->($resp);
 		};
-		if($need_wot_resp){
+		if(@need_wot_resp){
+			my $url = join "/", $self->server, $self->version, $self->api_method . '/?';
+			$url .= join '&', map { "t=$_" } @need_wot_resp;
+			die "the full request path must also be less than 8 KiB or it will be rejected" if length($url) > 8192; #ToDo paralel request
+
 			http_get $url, %{$self->param_for_http_req}, sub {
 				my ($body, $header) = @_;
-				my $result = {};
+
+				my $result = [];
 				eval{ $result = JSON::XS::decode_json($body) } if $header->{Status} == 200 && $body;
-				foreach ( keys %$map_host ){
-					$result->{$_} = {target => lc($_), %{$self->default_answer}, bad_answer => 1} if $self->cache_bad_answer && !exists $result->{$_};
-					$ret->{$_} = {%{$result->{$_}}} if exists $result->{$_};
+
+				my $result_by_host = { map { $_->{target} => $_ } @$result };
+
+				foreach ( @need_wot_resp ){
+					$result_by_host->{$_} = {target => lc ($_), %{$self->default_answer}, bad_answer => 1} if $self->cache_bad_answer && !exists $result_by_host->{$_};
+					$ret->{$_} = {%{$result_by_host->{$_}}} if exists $result_by_host->{$_};
 				}
+
 				$respons_processor->($ret);
-				$self->storage->set_info_by_hosts(host => $result, cb => sub {});
+				$self->storage->set_info_by_hosts(host => $result_by_host, cb => sub { });
 			};
 		}
 		else {
@@ -110,7 +131,7 @@ Generate params for http request
 
 sub param_for_http_req {
 	my $self = shift;
-	return {timeout => $self->http_timeout, keepalive => 0, headers => { "user-agent" => $self->user_agent }}
+	return {timeout => $self->http_timeout, keepalive => 0, headers => { "user-agent" => $self->user_agent, 'x-user-id' => $self->user_id, 'x-api-key' => $self->key }}
 }
 
 1;
