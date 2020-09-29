@@ -55,7 +55,16 @@ has user_agent       => ( is => 'rw', isa => 'Str',     default => 'AnyEvent::Ne
 has http_timeout     => ( is => 'rw', isa => 'Num',     default => 1 );
 has storage          => ( is => 'rw', isa => 'Object',  default => sub {AnyEvent::Net::WOT::Storage->new()});
 has cache_bad_answer => ( is => 'rw', isa => 'Bool',    default => 0);
-has default_answer   => ( is => 'rw', isa => 'HashRef', default => sub{ return {0 => [50, 50], 4 => [50, 50]}});
+
+sub default_answer {
+	return {
+		safety => {
+			status => AnyEvent::Net::WOT::Const::STATUS_UNKNOWN(),
+			reputations => 0,
+			confidence => 0
+		},
+	};
+}
 
 sub lookup {
 	my ($self, $hosts, $cb_ret) = @_;
@@ -93,16 +102,18 @@ sub lookup {
 			http_get $url, %{$self->param_for_http_req}, sub {
 				my ($body, $header) = @_;
 
-				my $result = {};
+				my $result = [];
 				eval{ $result = JSON::XS::decode_json($body) } if $header->{Status} == 200 && $body;
 
+				my $result_by_host = { map { $_->{target} => $_ } @$result };
+
 				foreach ( @need_wot_resp ){
-					# todo new default_answer structure
-					$result->{$_} = {target => lc ($_), %{$self->default_answer}, bad_answer => 1} if $self->cache_bad_answer && !exists $result->{$_};
-					$ret->{$_} = {%{$result->{$_}}} if exists $result->{$_};
+					$result_by_host->{$_} = {target => lc ($_), %{$self->default_answer}, bad_answer => 1} if $self->cache_bad_answer && !exists $result_by_host->{$_};
+					$ret->{$_} = {%{$result_by_host->{$_}}} if exists $result_by_host->{$_};
 				}
+
 				$respons_processor->($ret);
-				$self->storage->set_info_by_hosts(host => $result, cb => sub {});
+				$self->storage->set_info_by_hosts(host => $result_by_host, cb => sub { });
 			};
 		}
 		else {
